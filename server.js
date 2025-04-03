@@ -11,48 +11,52 @@ const io = new Server(server, {
 
 app.use(cors());
 
-const roomUsers = {}; 
+let rooms = {
+  'quickchatroom': { users: 0, accessID: null, sockets: new Set() }
+};
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  socket.on('joinRoom', ({ username, roomID }) => {
-    if (!roomUsers[roomID]) {
-      roomUsers[roomID] = [];
+  socket.on('joinRoom', ({ username, roomID, accessID }, callback) => {
+    if (!rooms[roomID]) {
+      callback({ success: false, error: 'Invalid Room ID!' });
+      return;
     }
 
-    if (roomUsers[roomID].length >= 3) {
-      socket.emit('roomFull');
+    if (rooms[roomID].accessID === null) {
+      rooms[roomID].accessID = accessID;
+    }
+
+    if (rooms[roomID].accessID !== accessID) {
+      callback({ success: false, error: 'Incorrect Access ID!' });
+      return;
+    }
+
+    if (rooms[roomID].users >= 3) {
+      callback({ success: false, error: 'Chat room full!' });
       return;
     }
 
     socket.join(roomID);
-    roomUsers[roomID].push(socket.id);
+    rooms[roomID].users++;
+    rooms[roomID].sockets.add(socket.id);
 
-    console.log(`User ${socket.id} joined Room: ${roomID}`);
-    io.to(roomID).emit('userCount', roomUsers[roomID].length);
-    socket.emit('roomJoined');
-  });
+    console.log(`${username} joined the room: ${roomID} (Users: ${rooms[roomID].users})`);
+    io.to(roomID).emit('userCount', rooms[roomID].users);
+    callback({ success: true });
 
-  socket.on('message', (msg) => {
-    console.log(`Message from ${msg.sender} in Room ${msg.roomId}:`, msg.text);
-    io.to(msg.roomId).emit('message', msg);
-  });
+    socket.on('message', (msg) => {
+      io.to(roomID).emit('message', msg);
+    });
 
-  socket.on('leaveRoom', (roomID) => {
-    socket.leave(roomID);
-    if (roomUsers[roomID]) {
-      roomUsers[roomID] = roomUsers[roomID].filter(id => id !== socket.id);
-      io.to(roomID).emit('userCount', roomUsers[roomID].length);
-    }
-  });
+    socket.on('disconnect', () => {
+      if (rooms[roomID].sockets.has(socket.id)) {
+        rooms[roomID].sockets.delete(socket.id);
+        rooms[roomID].users--;
+      }
 
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    for (const roomID in roomUsers) {
-      roomUsers[roomID] = roomUsers[roomID].filter(id => id !== socket.id);
-      io.to(roomID).emit('userCount', roomUsers[roomID].length);
-    }
+      io.to(roomID).emit('userCount', rooms[roomID].users);
+      console.log(`${username} left the room: ${roomID} (Users: ${rooms[roomID].users})`);
+    });
   });
 });
 
