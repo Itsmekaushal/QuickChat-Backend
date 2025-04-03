@@ -11,55 +11,48 @@ const io = new Server(server, {
 
 app.use(cors());
 
-let rooms = {
-  'quickchatroom': { users: 0, accessID: null, sockets: new Set() }
-};
+const roomUsers = {}; 
 
 io.on('connection', (socket) => {
-  socket.on('joinRoom', ({ username, roomID, accessID }) => {
-    if (!rooms[roomID]) {
-      socket.emit('error', 'Invalid Room ID!');
-      socket.disconnect();
-      return;
+  console.log('User connected:', socket.id);
+
+  socket.on('joinRoom', ({ username, roomID }) => {
+    if (!roomUsers[roomID]) {
+      roomUsers[roomID] = [];
     }
 
-    if (rooms[roomID].accessID === null) {
-      rooms[roomID].accessID = accessID; // ✅ First user sets Access ID
-    }
-
-    if (rooms[roomID].accessID !== accessID) {
-      socket.emit('error', 'Incorrect Access ID!');
-      socket.disconnect();
-      return;
-    }
-
-    if (rooms[roomID].users >= 3) {
-      socket.emit('error', 'Chat room full!');
-      socket.disconnect();
+    if (roomUsers[roomID].length >= 3) {
+      socket.emit('roomFull');
       return;
     }
 
     socket.join(roomID);
-    rooms[roomID].users++;
-    rooms[roomID].sockets.add(socket.id);
+    roomUsers[roomID].push(socket.id);
 
-    console.log(`${username} joined the room: ${roomID} (Users: ${rooms[roomID].users})`);
+    console.log(`User ${socket.id} joined Room: ${roomID}`);
+    io.to(roomID).emit('userCount', roomUsers[roomID].length);
+    socket.emit('roomJoined');
+  });
 
-    io.to(roomID).emit('userCount', rooms[roomID].users);
+  socket.on('message', (msg) => {
+    console.log(`Message from ${msg.sender} in Room ${msg.roomId}:`, msg.text);
+    io.to(msg.roomId).emit('message', msg);
+  });
 
-    socket.on('message', (msg) => {
-      io.to(roomID).emit('message', msg);
-    });
+  socket.on('leaveRoom', (roomID) => {
+    socket.leave(roomID);
+    if (roomUsers[roomID]) {
+      roomUsers[roomID] = roomUsers[roomID].filter(id => id !== socket.id);
+      io.to(roomID).emit('userCount', roomUsers[roomID].length);
+    }
+  });
 
-    socket.on('disconnect', () => {
-      if (rooms[roomID].sockets.has(socket.id)) {
-        rooms[roomID].sockets.delete(socket.id);
-        rooms[roomID].users--;
-      }
-
-      io.to(roomID).emit('userCount', rooms[roomID].users);
-      console.log(`${username} left the room: ${roomID} (Users: ${rooms[roomID].users})`);
-    });
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    for (const roomID in roomUsers) {
+      roomUsers[roomID] = roomUsers[roomID].filter(id => id !== socket.id);
+      io.to(roomID).emit('userCount', roomUsers[roomID].length);
+    }
   });
 });
 
